@@ -31,8 +31,9 @@ See [docs/user-stories.md](docs/user-stories.md) and [docs/architecture.md](docs
 |---|---|
 | User stories, architecture | done |
 | Policy engine + tests | done |
-| PayPal adapter (OAuth, Vault, Orders, Refunds) + tests | done, sandbox check pending |
-| Payment service + audit store | next |
+| PayPal adapter (OAuth, Vault, Orders, Refunds) + tests | done; sandbox orders verified, Vault pending |
+| Payment service + audit store + tests | done |
+| HTTP API | next |
 | Claude agent runner | planned |
 | React dashboard | planned |
 
@@ -48,10 +49,10 @@ uv run pytest
 uv run uvicorn app.main:app --reload
 ```
 
-Check your PayPal sandbox credentials:
+Check your PayPal sandbox credentials (the script lists Vault commands too):
 
 ```bash
-uv run python -m scripts.sandbox_smoke <sandbox-business-email>
+uv run python -m scripts.sandbox_smoke order <sandbox-business-email>
 ```
 
 ## Tools used

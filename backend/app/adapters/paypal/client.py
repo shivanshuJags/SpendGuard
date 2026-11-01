@@ -6,51 +6,23 @@ small typed results so the rest of the app never parses raw PayPal JSON.
 
 import asyncio
 import time
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from app.domain.money import Money
+from app.services.ports import (
+    GatewayError,
+    GatewayUnreachable,
+    OrderResult,
+    PaymentToken,
+    RefundResult,
+    SetupToken,
+)
 
 
-class PayPalError(Exception):
-    def __init__(self, status: int, name: str, message: str, debug_id: str | None):
-        super().__init__(f"PayPal {status} {name}: {message} (debug_id={debug_id})")
-        self.status = status
-        self.name = name
-        self.debug_id = debug_id  # quote this when searching PayPal's logs
-
-
-@dataclass(frozen=True, slots=True)
-class SetupToken:
-    id: str
-    approve_url: str
-
-
-@dataclass(frozen=True, slots=True)
-class PaymentToken:
-    id: str  # the vault_id we charge later
-    customer_id: str | None
-    payer_email: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class OrderResult:
-    id: str
-    status: str  # CREATED, PAYER_ACTION_REQUIRED, APPROVED, COMPLETED, ...
-    approve_url: str | None  # set when the owner must approve on PayPal
-    capture_id: str | None  # set once money has moved
-
-    @property
-    def is_paid(self) -> bool:
-        return self.status == "COMPLETED" and self.capture_id is not None
-
-
-@dataclass(frozen=True, slots=True)
-class RefundResult:
-    id: str
-    status: str
+class PayPalError(GatewayError):
+    pass
 
 
 class PayPalClient:
@@ -73,8 +45,9 @@ class PayPalClient:
         async with self._token_lock:
             if self._token and time.monotonic() < self._token_expires_at:
                 return self._token
-            response = await self._http.post(
-                f"{self._base_url}/v1/oauth2/token",
+            response = await self._send(
+                "POST",
+                "/v1/oauth2/token",
                 data={"grant_type": "client_credentials"},
                 auth=(self._client_id, self._client_secret),
             )
@@ -94,10 +67,16 @@ class PayPalClient:
         }
         if request_id:
             headers["PayPal-Request-Id"] = request_id
-        response = await self._http.request(
-            method, f"{self._base_url}{path}", json=json, headers=headers
-        )
+        response = await self._send(method, path, json=json, headers=headers)
         return _json_or_raise(response)
+
+    async def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        # Translate transport failures into the port's error, so services never
+        # import httpx.
+        try:
+            return await self._http.request(method, f"{self._base_url}{path}", **kwargs)
+        except httpx.TransportError as error:
+            raise GatewayUnreachable(f"{method} {path}: {type(error).__name__}") from error
 
     # ---- vault: link the owner's wallet once ----------------------------
 

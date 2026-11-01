@@ -18,6 +18,16 @@ class Outcome(StrEnum):
         return list(Outcome).index(self)
 
 
+class PaymentStatus(StrEnum):
+    DENIED = "denied"  # policy said no; no money moved
+    PENDING_OWNER = "pending_owner"  # escalated; waiting for the owner on PayPal
+    PAID = "paid"
+    REJECTED = "rejected"  # owner cancelled, or allowance frozen before capture
+    FAILED = "failed"  # PayPal refused; no money moved
+    UNKNOWN = "unknown"  # network failed mid-call; money may or may not have moved
+    REFUNDED = "refunded"
+
+
 @dataclass(frozen=True, slots=True)
 class PaymentRequest:
     """What the agent asks for. Everything here came from the agent: untrusted."""
