@@ -6,8 +6,14 @@ not in the middle of a demo when the first PayPal call happens.
 
 from functools import lru_cache
 
-from pydantic import SecretStr
+from urllib.parse import urlsplit
+
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The REST API hosts. sandbox.paypal.com / www.paypal.com are the websites,
+# which answer API calls with redirects instead of errors.
+_PAYPAL_API_HOSTS = {"api-m.sandbox.paypal.com", "api-m.paypal.com"}
 
 
 class Settings(BaseSettings):
@@ -20,6 +26,17 @@ class Settings(BaseSettings):
 
     anthropic_api_key: SecretStr | None = None
     public_base_url: str = "http://localhost:8000"
+
+    @field_validator("paypal_base_url")
+    @classmethod
+    def _paypal_api_host(cls, value: str) -> str:
+        parts = urlsplit(value)
+        if parts.scheme != "https" or parts.hostname not in _PAYPAL_API_HOSTS:
+            raise ValueError(
+                f"{value!r} is not a PayPal REST API URL; "
+                "use https://api-m.sandbox.paypal.com for sandbox"
+            )
+        return value.rstrip("/")
 
 
 @lru_cache
