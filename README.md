@@ -34,7 +34,7 @@ See [docs/user-stories.md](docs/user-stories.md) and [docs/architecture.md](docs
 | PayPal adapter (OAuth, Vault, Orders, Refunds) + tests | done; sandbox orders and Vault auto-pay verified |
 | Payment service + audit store + tests | done |
 | HTTP API + demo catalog + tests | done; verified against sandbox |
-| Shopping agent: Gemini or Claude adapter, live event stream + tests | done; live run pending API key |
+| Shopping agent: Gemini or Claude adapter, live event stream + tests | done; live Gemini run verified against PayPal sandbox |
 | React dashboard (live agent timeline) | done; wallet link and owner approval verified in sandbox |
 
 ## Run it (backend)

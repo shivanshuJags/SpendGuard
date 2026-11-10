@@ -11,6 +11,20 @@ from .base import AgentRunner
 DEFAULT_MODELS = {"gemini": "gemini-2.5-flash", "anthropic": "claude-opus-5-5"}
 
 
+def _gemini_http_options():
+    from google.genai import types
+
+    # Retrying a model call is safe: it only asks for the next step, it never runs
+    # a tool or moves money. Overload (503) and rate limits (429) are usually brief.
+    return types.HttpOptions(
+        timeout=60_000,  # milliseconds, per attempt
+        retry_options=types.HttpRetryOptions(
+            attempts=4, initial_delay=1.0, max_delay=8.0,
+            http_status_codes=[408, 429, 500, 502, 503, 504],
+        ),
+    )
+
+
 @asynccontextmanager
 async def agent_runner(settings: Settings, llm: Any = None) -> AsyncIterator[AgentRunner | None]:
     """Yield a runner, or None when the chosen provider has no API key.
@@ -27,7 +41,10 @@ async def agent_runner(settings: Settings, llm: Any = None) -> AsyncIterator[Age
 
         owned = None
         if llm is None and settings.gemini_api_key:
-            owned = genai.Client(api_key=settings.gemini_api_key.get_secret_value())
+            owned = genai.Client(
+                api_key=settings.gemini_api_key.get_secret_value(),
+                http_options=_gemini_http_options(),
+            )
         client = llm or owned
         try:
             yield None if client is None else GeminiAgentRunner(
