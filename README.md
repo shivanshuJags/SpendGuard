@@ -31,7 +31,7 @@ See [docs/user-stories.md](docs/user-stories.md) and [docs/architecture.md](docs
 |---|---|
 | User stories, architecture | done |
 | Policy engine + tests | done |
-| PayPal adapter (OAuth, Vault, Orders, Refunds) + tests | done; sandbox orders verified, Vault pending |
+| PayPal adapter (OAuth, Vault, Orders, Refunds) + tests | done; sandbox orders and Vault auto-pay verified |
 | Payment service + audit store + tests | done |
 | HTTP API | next |
 | Claude agent runner | planned |
