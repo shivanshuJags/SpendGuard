@@ -14,7 +14,7 @@ from typing import Any
 
 from app.adapters.store import Store, utcnow
 
-from .runner import AgentRunner
+from .base import AgentRunner
 from .tools import AgentTools
 
 _TERMINAL = {"run.finished", "run.error"}

@@ -8,7 +8,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-import anthropic
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.adapters.catalog import Catalog
 from app.adapters.paypal.client import PayPalClient
 from app.adapters.store import Store
-from app.agent.runner import AgentRunner
+from app.agent.base import AgentRunner
+from app.agent.factory import agent_runner
 from app.agent.runs import RunRegistry
 from app.api.errors import install_error_handlers
 from app.api.routes import router
@@ -32,14 +32,14 @@ class Container:
     payments: PaymentService
     catalog: Catalog
     runs: RunRegistry
-    agent: AgentRunner | None  # None when no Anthropic key is configured
+    agent: AgentRunner | None  # None when the chosen provider has no API key
 
 
 def create_app(
     settings: Settings | None = None,
     gateway: PaymentGateway | None = None,
     store: Store | None = None,
-    claude: object | None = None,  # tests pass a scripted fake
+    llm: object | None = None,  # tests pass a scripted fake model client
 ) -> FastAPI:
     settings = settings or get_settings()
 
@@ -53,34 +53,20 @@ def create_app(
                 settings.paypal_base_url,
                 http,
             )
-            owned_claude = None
-            if claude is None and settings.anthropic_api_key:
-                owned_claude = anthropic.AsyncAnthropic(
-                    api_key=settings.anthropic_api_key.get_secret_value()
-                )
-            llm = claude or owned_claude
             runs = RunRegistry(db)
-            app.state.container = Container(
-                settings=settings,
-                store=db,
-                payments=PaymentService(db, paypal, settings.public_base_url),
-                catalog=Catalog.load(settings.demo_merchant_email),
-                runs=runs,
-                agent=None
-                if llm is None
-                else AgentRunner(
-                    llm,
-                    model=settings.agent_model,
-                    effort=settings.agent_effort,
-                    max_steps=settings.agent_max_steps,
-                ),
-            )
-            try:
-                yield
-            finally:
-                await runs.shutdown()
-                if owned_claude is not None:
-                    await owned_claude.close()
+            async with agent_runner(settings, llm) as agent:
+                app.state.container = Container(
+                    settings=settings,
+                    store=db,
+                    payments=PaymentService(db, paypal, settings.public_base_url),
+                    catalog=Catalog.load(settings.demo_merchant_email),
+                    runs=runs,
+                    agent=agent,
+                )
+                try:
+                    yield
+                finally:
+                    await runs.shutdown()
         if store is None:  # close only what we opened
             db.close()
 

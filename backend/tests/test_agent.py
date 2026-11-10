@@ -1,4 +1,4 @@
-"""Agent tests with a scripted fake Claude: no API key, no cost, deterministic.
+"""Claude adapter tests with a scripted fake Claude: no API key, no cost, deterministic.
 
 The fake plays the part of a *manipulated* agent: it tries to buy the injected
 listing. The point is that the outcome is decided by policy, not by Claude.
@@ -63,10 +63,10 @@ MANIPULATED_RUN = [
 
 def make_client(claude, paypal=None):
     settings = Settings(_env_file=None, paypal_client_id="id", paypal_client_secret="s",
-                        demo_merchant_email=MERCHANT)
+                        demo_merchant_email=MERCHANT, agent_provider="anthropic")
     store = Store(":memory:")
     return TestClient(create_app(settings, gateway=paypal or FakePayPal(), store=store,
-                                 claude=claude)), store
+                                 llm=claude)), store
 
 
 def run_to_end(client, task="Restock the office"):

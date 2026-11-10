@@ -34,7 +34,7 @@ See [docs/user-stories.md](docs/user-stories.md) and [docs/architecture.md](docs
 | PayPal adapter (OAuth, Vault, Orders, Refunds) + tests | done; sandbox orders and Vault auto-pay verified |
 | Payment service + audit store + tests | done |
 | HTTP API + demo catalog + tests | done; verified against sandbox |
-| Claude agent (tool use, live event stream) + tests | done; live run pending API key |
+| Shopping agent: Gemini or Claude adapter, live event stream + tests | done; live run pending API key |
 | React dashboard (live agent timeline) | done; wallet link and owner approval verified in sandbox |
 
 ## Run it (backend)
@@ -43,7 +43,7 @@ Requirements: Python 3.13 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 cd backend
-cp .env.example .env      # fill in PayPal sandbox and Anthropic keys
+cp .env.example .env      # fill in PayPal sandbox keys and GEMINI_API_KEY
 uv sync
 uv run pytest
 uv run uvicorn app.main:app --factory --reload   # API docs: http://localhost:8000/docs
@@ -68,7 +68,7 @@ npm run dev               # http://localhost:5173 (proxies /api to :8000)
 ## Tools used
 
 - **PayPal**: Orders v2, Vault v3 (payment tokens), Payments v2 refunds — sandbox.
-- **AI**: Anthropic Claude (`claude-opus-5-5`) via the Anthropic Python SDK, as the shopping agent. Claude gets three tools (search catalog, check allowance, purchase) in a server-side loop; it can only *request* purchases, and SpendGuard's deterministic policy decides each one. Server-side refusal fallbacks are enabled.
+- **AI**: Google Gemini (default, `google-genai` SDK) or Anthropic Claude, chosen with `AGENT_PROVIDER`. The model gets three tools (search catalog, check allowance, purchase) in a server-side loop with automatic function calling disabled; it can only *request* purchases, and SpendGuard's deterministic policy decides each one.
 
 ## License
 

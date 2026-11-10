@@ -5,6 +5,7 @@ not in the middle of a demo when the first PayPal call happens.
 """
 
 from functools import lru_cache
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import SecretStr, field_validator
@@ -23,9 +24,12 @@ class Settings(BaseSettings):
     paypal_client_secret: SecretStr
     paypal_base_url: str = "https://api-m.sandbox.paypal.com"
 
+    # Which model provider drives the shopping agent.
+    agent_provider: Literal["gemini", "anthropic"] = "gemini"
+    gemini_api_key: SecretStr | None = None
     anthropic_api_key: SecretStr | None = None
-    agent_model: str = "claude-opus-5-5"
-    agent_effort: str = "medium"  # low | medium | high | xhigh | max
+    agent_model: str | None = None  # None = the provider's default (app/agent/factory.py)
+    agent_effort: str = "medium"  # Claude only: low | medium | high | xhigh | max
     agent_max_steps: int = 12
     # Where PayPal sends the owner back to (this API) ...
     public_base_url: str = "http://localhost:8000"

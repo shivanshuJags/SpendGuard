@@ -231,7 +231,7 @@ async def start_agent_run(c: C, body: AgentRunCreate) -> AgentRunOut:
     """
     if c.agent is None:
         return JSONResponse(
-            {"error": "AgentUnavailable", "message": "Set ANTHROPIC_API_KEY to run the agent."},
+            {"error": "AgentUnavailable", "message": "Set GEMINI_API_KEY (or ANTHROPIC_API_KEY with AGENT_PROVIDER=anthropic) to run the agent."},
             status_code=503,
         )
     _allowance(c, body.allowance_id)
