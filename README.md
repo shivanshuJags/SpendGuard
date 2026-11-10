@@ -35,7 +35,7 @@ See [docs/user-stories.md](docs/user-stories.md) and [docs/architecture.md](docs
 | Payment service + audit store + tests | done |
 | HTTP API + demo catalog + tests | done; verified against sandbox |
 | Claude agent (tool use, live event stream) + tests | done; live run pending API key |
-| React dashboard (live agent timeline) | done; PayPal return flows pending manual check |
+| React dashboard (live agent timeline) | done; wallet link and owner approval verified in sandbox |
 
 ## Run it (backend)
 

@@ -4,10 +4,16 @@
 - Spent and reserved are computed from payment rows, never stored as counters
   that could drift from the rows they summarize.
 - audit_event is append-only: there is no update or delete method for it.
+- One connection, shared by FastAPI's worker threads (plain `def` routes run
+  in a thread pool). sqlite3 connections are not safe for concurrent use, so
+  every method holds the store's lock; the store owns its connection, so it
+  owns access to it too.
 """
 
+import functools
 import json
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -104,29 +110,44 @@ class PaymentRecord:
     updated_at: datetime
 
 
+def _serialized(method):
+    """Run the method while holding the store's (re-entrant) lock."""
+
+    @functools.wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return locked
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
 class Store:
     def __init__(self, path: str | Path = "spendguard.db"):
-        # One process, guarded by the service's lock; ok to share across threads.
+        # check_same_thread=False only disables sqlite3's guard; _lock replaces it.
+        self._lock = threading.RLock()  # re-entrant: get_allowance calls _sum
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.executescript(SCHEMA)
 
+    @_serialized
     def close(self) -> None:
         self._db.close()
 
     # ---- wallet -----------------------------------------------------------
 
+    @_serialized
     def get_wallet(self, owner_id: str = "owner") -> Wallet | None:
         row = self._db.execute("SELECT * FROM wallet WHERE owner_id = ?", (owner_id,)).fetchone()
         if row is None:
             return None
         return Wallet(row["vault_id"], row["payer_email"], datetime.fromisoformat(row["linked_at"]))
 
+    @_serialized
     def save_wallet(self, vault_id: str, payer_email: str | None, owner_id: str = "owner") -> None:
         with self._db:
             self._db.execute(
@@ -134,12 +155,14 @@ class Store:
                 (owner_id, vault_id, payer_email, utcnow().isoformat()),
             )
 
+    @_serialized
     def delete_wallet(self, owner_id: str = "owner") -> None:
         with self._db:
             self._db.execute("DELETE FROM wallet WHERE owner_id = ?", (owner_id,))
 
     # ---- allowances -------------------------------------------------------
 
+    @_serialized
     def create_allowance(self, a: Allowance) -> None:
         with self._db:
             self._db.execute(
@@ -160,16 +183,19 @@ class Store:
                 ),
             )
 
+    @_serialized
     def set_frozen(self, allowance_id: str, frozen: bool) -> None:
         with self._db:
             self._db.execute(
                 "UPDATE allowance SET frozen = ? WHERE id = ?", (int(frozen), allowance_id)
             )
 
+    @_serialized
     def list_allowance_ids(self) -> list[str]:
         rows = self._db.execute("SELECT id FROM allowance ORDER BY created_at DESC")
         return [r["id"] for r in rows]
 
+    @_serialized
     def get_allowance(self, allowance_id: str) -> Allowance | None:
         row = self._db.execute("SELECT * FROM allowance WHERE id = ?", (allowance_id,)).fetchone()
         if row is None:
@@ -191,6 +217,7 @@ class Store:
             frozen=bool(row["frozen"]),
         )
 
+    @_serialized
     def _sum(self, allowance_id: str, currency: str, statuses: tuple[PaymentStatus, ...]) -> Money:
         marks = ",".join("?" * len(statuses))
         rows = self._db.execute(
@@ -201,6 +228,7 @@ class Store:
         # Sum in Decimal, in Python: SQL SUM() on TEXT would convert to float.
         return Money(sum((Decimal(r["amount"]) for r in rows), Decimal(0)), currency)
 
+    @_serialized
     def recent_attempt_times(self, allowance_id: str, since: datetime) -> list[datetime]:
         marks = ",".join("?" * len(_ATTEMPTED))
         rows = self._db.execute(
@@ -212,6 +240,7 @@ class Store:
 
     # ---- payments ---------------------------------------------------------
 
+    @_serialized
     def insert_payment(
         self,
         payment_id: str,
@@ -249,6 +278,7 @@ class Store:
 
     _UPDATABLE = {"status", "paypal_order_id", "capture_id", "approve_url", "error"}
 
+    @_serialized
     def update_payment(self, payment_id: str, **fields: Any) -> None:
         unknown = set(fields) - self._UPDATABLE
         if unknown:
@@ -260,10 +290,12 @@ class Store:
                 f"UPDATE payment SET {assignments} WHERE id = ?", (*fields.values(), payment_id)
             )
 
+    @_serialized
     def get_payment(self, payment_id: str) -> PaymentRecord | None:
         row = self._db.execute("SELECT * FROM payment WHERE id = ?", (payment_id,)).fetchone()
         return None if row is None else _payment(row)
 
+    @_serialized
     def list_payments(self, allowance_id: str) -> list[PaymentRecord]:
         rows = self._db.execute(
             "SELECT * FROM payment WHERE allowance_id = ? ORDER BY created_at", (allowance_id,)
@@ -272,6 +304,7 @@ class Store:
 
     # ---- audit (append-only) ----------------------------------------------
 
+    @_serialized
     def append_audit(self, kind: str, data: dict[str, Any], payment_id: str | None = None) -> None:
         with self._db:
             self._db.execute(
@@ -279,6 +312,7 @@ class Store:
                 (utcnow().isoformat(), payment_id, kind, json.dumps(data, default=str)),
             )
 
+    @_serialized
     def list_audit(self, after_seq: int = 0, limit: int = 200) -> list[dict[str, Any]]:
         rows = self._db.execute(
             "SELECT * FROM audit_event WHERE seq > ? ORDER BY seq LIMIT ?", (after_seq, limit)
