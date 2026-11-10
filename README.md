@@ -34,8 +34,8 @@ See [docs/user-stories.md](docs/user-stories.md) and [docs/architecture.md](docs
 | PayPal adapter (OAuth, Vault, Orders, Refunds) + tests | done; sandbox orders and Vault auto-pay verified |
 | Payment service + audit store + tests | done |
 | HTTP API + demo catalog + tests | done; verified against sandbox |
-| Claude agent runner | next |
-| React dashboard | planned |
+| Claude agent (tool use, live event stream) + tests | done; live run pending API key |
+| React dashboard | next |
 
 ## Run it (backend)
 
@@ -58,7 +58,7 @@ uv run python -m scripts.sandbox_smoke order <sandbox-business-email>
 ## Tools used
 
 - **PayPal**: Orders v2, Vault v3 (payment tokens), Payments v2 refunds — sandbox.
-- **AI**: Anthropic Claude (tool use) as the shopping agent. *(in progress)*
+- **AI**: Anthropic Claude (`claude-opus-5-5`) via the Anthropic Python SDK, as the shopping agent. Claude gets three tools (search catalog, check allowance, purchase) in a server-side loop; it can only *request* purchases, and SpendGuard's deterministic policy decides each one. Server-side refusal fallbacks are enabled.
 
 ## License
 

@@ -1,14 +1,16 @@
 """HTTP routes. Each one translates HTTP to a service call and back; no rules here."""
 
+import json
 import uuid
 from datetime import timedelta
 from typing import Annotated
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from app.adapters.store import utcnow
+from app.agent.tools import AgentTools
 from app.domain.models import Allowance
 from app.domain.money import Money
 from app.services.payments import InvalidState, NotFound
@@ -16,6 +18,8 @@ from app.services.ports import GatewayError, GatewayUnreachable
 from app.services.shopping import purchase_item
 
 from .schemas import (
+    AgentRunCreate,
+    AgentRunOut,
     AllowanceCreate,
     AllowanceOut,
     AuditEventOut,
@@ -213,3 +217,56 @@ def audit(
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
 ) -> list[AuditEventOut]:
     return [AuditEventOut(**e) for e in c.store.list_audit(after, limit)]
+
+
+# ---- agent --------------------------------------------------------------------
+
+
+@router.post("/agent/runs", status_code=202)
+async def start_agent_run(c: C, body: AgentRunCreate) -> AgentRunOut:
+    """Start the shopping agent in the background; follow it via /events.
+
+    Must be `async def`: plain `def` routes run in a worker thread, which has no
+    event loop to own the background task.
+    """
+    if c.agent is None:
+        return JSONResponse(
+            {"error": "AgentUnavailable", "message": "Set ANTHROPIC_API_KEY to run the agent."},
+            status_code=503,
+        )
+    _allowance(c, body.allowance_id)
+    tools = AgentTools(c.payments, c.catalog, c.store, body.allowance_id)
+    run = c.runs.start(c.agent, tools, body.allowance_id, body.task)
+    return AgentRunOut(id=run.id, allowance_id=run.allowance_id, task=run.task,
+                       status=run.status, events=run.events)
+
+
+def _run(c, run_id: str):
+    run = c.runs.get(run_id)
+    if run is None:
+        raise NotFound(f"agent run {run_id}")
+    return run
+
+
+@router.get("/agent/runs/{run_id}")
+def get_agent_run(c: C, run_id: str) -> AgentRunOut:
+    run = _run(c, run_id)
+    return AgentRunOut(id=run.id, allowance_id=run.allowance_id, task=run.task,
+                       status=run.status, events=run.events)
+
+
+@router.get("/agent/runs/{run_id}/events")
+async def agent_run_events(
+    c: C, run_id: str, after: Annotated[int, Query(ge=0)] = 0
+) -> StreamingResponse:
+    """Server-Sent Events: replays events after `after`, then streams live ones."""
+    run = _run(c, run_id)
+
+    async def stream():
+        async for event in c.runs.follow(run, after):
+            data = json.dumps(event, default=str)
+            yield f"id: {event['seq']}\nevent: {event['kind']}\ndata: {data}\n\n"
+
+    return StreamingResponse(
+        stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+    )

@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     paypal_base_url: str = "https://api-m.sandbox.paypal.com"
 
     anthropic_api_key: SecretStr | None = None
+    agent_model: str = "claude-opus-5-5"
+    agent_effort: str = "medium"  # low | medium | high | xhigh | max
+    agent_max_steps: int = 12
     # Where PayPal sends the owner back to (this API) ...
     public_base_url: str = "http://localhost:8000"
     # ... and where the API then redirects them (the React dashboard).

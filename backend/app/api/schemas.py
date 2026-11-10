@@ -159,3 +159,16 @@ class AuditEventOut(BaseModel):
     payment_id: str | None
     kind: str
     data: dict
+
+
+class AgentRunCreate(BaseModel):
+    allowance_id: str
+    task: Annotated[str, Field(min_length=1, max_length=1000)]
+
+
+class AgentRunOut(BaseModel):
+    id: str
+    allowance_id: str
+    task: str
+    status: str
+    events: list[dict]
