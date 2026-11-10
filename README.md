@@ -33,8 +33,8 @@ See [docs/user-stories.md](docs/user-stories.md) and [docs/architecture.md](docs
 | Policy engine + tests | done |
 | PayPal adapter (OAuth, Vault, Orders, Refunds) + tests | done; sandbox orders and Vault auto-pay verified |
 | Payment service + audit store + tests | done |
-| HTTP API | next |
-| Claude agent runner | planned |
+| HTTP API + demo catalog + tests | done; verified against sandbox |
+| Claude agent runner | next |
 | React dashboard | planned |
 
 ## Run it (backend)
@@ -46,7 +46,7 @@ cd backend
 cp .env.example .env      # fill in PayPal sandbox and Anthropic keys
 uv sync
 uv run pytest
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --factory --reload   # API docs: http://localhost:8000/docs
 ```
 
 Check your PayPal sandbox credentials (the script lists Vault commands too):

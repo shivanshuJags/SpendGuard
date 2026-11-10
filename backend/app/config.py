@@ -5,7 +5,6 @@ not in the middle of a demo when the first PayPal call happens.
 """
 
 from functools import lru_cache
-
 from urllib.parse import urlsplit
 
 from pydantic import SecretStr, field_validator
@@ -25,7 +24,13 @@ class Settings(BaseSettings):
     paypal_base_url: str = "https://api-m.sandbox.paypal.com"
 
     anthropic_api_key: SecretStr | None = None
+    # Where PayPal sends the owner back to (this API) ...
     public_base_url: str = "http://localhost:8000"
+    # ... and where the API then redirects them (the React dashboard).
+    frontend_url: str = "http://localhost:5173"
+    database_path: str = "spendguard.db"
+    # The sandbox business account that sells the demo catalog's items.
+    demo_merchant_email: str
 
     @field_validator("paypal_base_url")
     @classmethod

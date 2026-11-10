@@ -166,6 +166,10 @@ class Store:
                 "UPDATE allowance SET frozen = ? WHERE id = ?", (int(frozen), allowance_id)
             )
 
+    def list_allowance_ids(self) -> list[str]:
+        rows = self._db.execute("SELECT id FROM allowance ORDER BY created_at DESC")
+        return [r["id"] for r in rows]
+
     def get_allowance(self, allowance_id: str) -> Allowance | None:
         row = self._db.execute("SELECT * FROM allowance WHERE id = ?", (allowance_id,)).fetchone()
         if row is None:
