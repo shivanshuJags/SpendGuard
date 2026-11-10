@@ -177,3 +177,17 @@ def test_late_subscriber_can_replay_from_a_position():
                 if line.startswith("data: "):
                     replay.append(json.loads(line[6:])["seq"])
     assert replay == [e["seq"] for e in events if e["seq"] > 3]
+
+
+def test_finished_run_reconnect_gets_204_so_the_browser_stops():
+    claude = FakeClaude(*MANIPULATED_RUN)
+    client, _ = make_client(claude)
+    with client:
+        _, run, events = run_to_end(client)
+        again = client.get(f"/api/agent/runs/{run['id']}/events",
+                           headers={"Last-Event-ID": str(events[-1]["seq"])})
+        resumed = client.get(f"/api/agent/runs/{run['id']}/events",
+                             headers={"Last-Event-ID": str(events[-1]["seq"] - 1)})
+    assert again.status_code == 204
+    assert resumed.status_code == 200 and resumed.text.count("data: ") == 1
+    assert "event:" not in resumed.text

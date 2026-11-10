@@ -6,7 +6,7 @@ from datetime import timedelta
 from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from app.adapters.store import utcnow
@@ -255,17 +255,27 @@ def get_agent_run(c: C, run_id: str) -> AgentRunOut:
                        status=run.status, events=run.events)
 
 
-@router.get("/agent/runs/{run_id}/events")
+@router.get("/agent/runs/{run_id}/events", response_model=None)
 async def agent_run_events(
-    c: C, run_id: str, after: Annotated[int, Query(ge=0)] = 0
-) -> StreamingResponse:
-    """Server-Sent Events: replays events after `after`, then streams live ones."""
+    c: C,
+    run_id: str,
+    after: Annotated[int, Query(ge=0)] = 0,
+    last_event_id: Annotated[int | None, Header()] = None,
+) -> StreamingResponse | Response:
+    """Server-Sent Events: replays events after `after`, then streams live ones.
+
+    Events carry no `event:` name, so a browser EventSource gets them all via
+    onmessage. On reconnect the browser sends Last-Event-ID; we resume there.
+    """
     run = _run(c, run_id)
+    position = max(after, last_event_id or 0)
+    if run.status != "running" and position >= len(run.events):
+        return Response(status_code=204)  # SSE spec: 204 tells the browser to stop reconnecting
 
     async def stream():
-        async for event in c.runs.follow(run, after):
+        async for event in c.runs.follow(run, position):
             data = json.dumps(event, default=str)
-            yield f"id: {event['seq']}\nevent: {event['kind']}\ndata: {data}\n\n"
+            yield f"id: {event['seq']}\ndata: {data}\n\n"
 
     return StreamingResponse(
         stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
