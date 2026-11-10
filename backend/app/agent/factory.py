@@ -17,6 +17,8 @@ def _gemini_http_options():
     # Retrying a model call is safe: it only asks for the next step, it never runs
     # a tool or moves money. Overload (503) and rate limits (429) are usually brief.
     return types.HttpOptions(
+        # Passing HttpOptions switches the SDK to "v1", which rejects function calling.
+        api_version="v1beta",
         timeout=60_000,  # milliseconds, per attempt
         retry_options=types.HttpRetryOptions(
             attempts=4, initial_delay=1.0, max_delay=8.0,

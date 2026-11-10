@@ -8,6 +8,16 @@ const DEMO_TASK =
 
 const TERMINAL = new Set(['run.finished', 'run.error'])
 
+function allowanceHint(allowance) {
+  if (!allowance) return 'Create an allowance first.'
+  if (allowance.frozen) return 'Allowance is frozen: every purchase will be denied.'
+  if (Number(allowance.remaining) < Number(allowance.budget) * 0.25) {
+    return `Only ${allowance.remaining} ${allowance.currency} left: the budget rule will deny most purchases. ` +
+      'Click "New demo allowance" to re-run the demo.'
+  }
+  return ''
+}
+
 export default function AgentPanel({ allowance, onPaymentEvent }) {
   const [task, setTask] = useState(DEMO_TASK)
   const [events, setEvents] = useState([])
@@ -49,13 +59,11 @@ export default function AgentPanel({ allowance, onPaymentEvent }) {
     <section className="card">
       <h2>
         Shopping agent
-        <span className="muted small">Claude proposes · SpendGuard decides · PayPal pays</span>
+        <span className="muted small">AI proposes · SpendGuard decides · PayPal pays</span>
       </h2>
       <textarea className="task" value={task} onChange={(e) => setTask(e.target.value)} disabled={running} />
       <div className="row" style={{ marginTop: 8, justifyContent: 'space-between' }}>
-        <span className="muted small">
-          {allowance ? (allowance.frozen ? 'Allowance is frozen: every purchase will be denied.' : '') : 'Create an allowance first.'}
-        </span>
+        <span className="muted small">{allowanceHint(allowance)}</span>
         <button className="btn primary" onClick={start} disabled={!allowance || running || !task.trim()}>
           {running ? 'Agent working…' : 'Run agent'}
         </button>

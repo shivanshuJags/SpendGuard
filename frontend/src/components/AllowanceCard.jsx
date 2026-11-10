@@ -72,6 +72,13 @@ export default function AllowanceCard({ allowance, onChange, onError }) {
         <dt>Velocity</dt>
         <dd>{allowance.max_purchases_per_hour ?? 'no'} purchases / hour</dd>
       </dl>
+
+      {/* Each run spends from this allowance; re-running the demo needs a fresh one. */}
+      <div className="row" style={{ marginTop: 12, justifyContent: 'flex-end' }}>
+        <button className="btn" disabled={busy} onClick={() => act(api.createDemoAllowance)}>
+          New demo allowance
+        </button>
+      </div>
     </section>
   )
 }

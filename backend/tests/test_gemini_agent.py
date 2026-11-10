@@ -116,5 +116,18 @@ def test_safety_stop_rate_limit_and_step_cap():
     limited, _ = run(FakeGemini(errors.ClientError(429, {"error": {"message": "quota", "status": "RESOURCE_EXHAUSTED"}})))
     assert limited[-1]["kind"] == "run.error" and "429" in limited[-1]["message"]
 
+    daily = errors.ClientError(429, {"error": {"message": "Generate content requests per day limit exceeded on Free Tier.",
+                                               "status": "RESOURCE_EXHAUSTED"}})
+    exhausted, _ = run(FakeGemini(daily))
+    assert "daily request limit" in exhausted[-1]["message"] and "AGENT_MODEL" in exhausted[-1]["message"]
+
     looping, _ = run(FakeGemini(*[model_turn(call(f"c{i}", "get_allowance")) for i in range(20)]))
     assert looping[-1]["kind"] == "run.error" and "12 steps" in looping[-1]["message"]
+
+
+def test_real_client_options_keep_function_calling_api():
+    from app.agent.factory import _gemini_http_options
+
+    options = _gemini_http_options()
+    assert options.api_version == "v1beta"  # "v1" answers 400 to function declarations
+    assert 503 in options.retry_options.http_status_codes

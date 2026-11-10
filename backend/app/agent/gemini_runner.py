@@ -20,6 +20,17 @@ from .tools import TOOLS, AgentTools
 _BLOCKED = {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "RECITATION"}
 
 
+def _explain(error: errors.ClientError, model: str) -> str:
+    message = error.message or ""
+    if error.code != 429:
+        return message
+    # A daily quota won't clear by retrying; say so, so the owner can switch models.
+    if "per day" in message:
+        return (f"the free-tier daily request limit for {model} is used up. "
+                "Set AGENT_MODEL to another model (e.g. gemini-2.5-flash) or wait for the reset.")
+    return "rate limit; try again in a minute."
+
+
 def _declarations() -> list[types.FunctionDeclaration]:
     # Same JSON Schemas the Claude adapter uses; Gemini accepts them as-is.
     return [
@@ -57,8 +68,7 @@ class GeminiAgentRunner:
                     model=self._model, contents=contents, config=self._config
                 )
             except errors.ClientError as error:  # 4xx: bad key, bad model, quota
-                hint = "rate limit or quota; try again shortly" if error.code == 429 else error.message
-                await emit("run.error", {"step": step, "message": f"Gemini API error {error.code}: {hint}"})
+                await emit("run.error", {"step": step, "message": f"Gemini API error {error.code}: {_explain(error, self._model)}"})
                 return
             except errors.ServerError as error:
                 await emit("run.error", {"step": step, "message": f"Gemini server error {error.code}; try again."})
