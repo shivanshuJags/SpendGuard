@@ -18,10 +18,10 @@ export function StatusChip({ status }) {
 export default function PaymentsTable({ payments, onChange, onError }) {
   const [busy, setBusy] = useState(null)
 
-  async function refund(id) {
+  async function act(id, call) {
     setBusy(id)
     try {
-      await api.refund(id)
+      await call(id)
       onChange()
     } catch (error) {
       onError(error.message)
@@ -56,11 +56,18 @@ export default function PaymentsTable({ payments, onChange, onError }) {
                   </td>
                   <td>
                     {p.status === 'pending_owner' && p.approve_url && (
-                      // Same tab: PayPal redirects back here after approval.
-                      <a className="btn small primary" href={p.approve_url}>Approve on PayPal</a>
+                      <div className="row" style={{ gap: 6 }}>
+                        {/* Same tab: PayPal redirects back here after approval. */}
+                        <a className="btn small primary" href={p.approve_url}>Approve on PayPal</a>
+                        <button className="btn small" disabled={busy === p.id} onClick={() => act(p.id, api.reject)}>Reject</button>
+                      </div>
+                    )}
+                    {p.status === 'unknown' && (
+                      <button className="btn small" disabled={busy === p.id} onClick={() => act(p.id, api.check)}
+                        title="Ask PayPal whether this payment went through">Check with PayPal</button>
                     )}
                     {p.status === 'paid' && (
-                      <button className="btn small" disabled={busy === p.id} onClick={() => refund(p.id)}>Refund</button>
+                      <button className="btn small" disabled={busy === p.id} onClick={() => act(p.id, api.refund)}>Refund</button>
                     )}
                   </td>
                 </tr>

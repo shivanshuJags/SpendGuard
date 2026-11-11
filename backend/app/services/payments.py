@@ -30,7 +30,7 @@ class InvalidState(ValueError):
 class PaymentResult:
     payment_id: str
     status: PaymentStatus
-    decision: Decision
+    decision: Decision | None  # None for owner actions, which re-use the PayPal steps
     approve_url: str | None = None
     capture_id: str | None = None
     error: str | None = None
@@ -142,7 +142,8 @@ class PaymentService:
                     return await self._escalate(payment_id, req, decision)
 
     async def _auto_pay(
-        self, payment_id: str, req: PaymentRequest, decision: Decision, vault_id: str
+        self, payment_id: str, req: PaymentRequest, decision: Decision | None, vault_id: str,
+        note: dict | None = None,
     ) -> PaymentResult:
         async def charge() -> OrderResult:
             order = await self._gateway.create_order(
@@ -156,10 +157,11 @@ class PaymentService:
                 order = await self._gateway.capture_order(order.id, f"{payment_id}-capture")
             return order
 
-        return await self._call_paypal(payment_id, decision, charge)
+        return await self._call_paypal(payment_id, decision, charge, note)
 
     async def _escalate(
-        self, payment_id: str, req: PaymentRequest, decision: Decision
+        self, payment_id: str, req: PaymentRequest, decision: Decision | None,
+        note: dict | None = None,
     ) -> PaymentResult:
         async def create() -> OrderResult:
             return await self._gateway.create_order(
@@ -171,10 +173,10 @@ class PaymentService:
                 cancel_url=f"{self._base}/api/payments/{payment_id}/cancel",
             )
 
-        return await self._call_paypal(payment_id, decision, create)
+        return await self._call_paypal(payment_id, decision, create, note)
 
-    async def _call_paypal(self, payment_id, decision, call) -> PaymentResult:
-        """Run a PayPal write, retrying once on network failure.
+    async def _call_paypal(self, payment_id, decision, call, note=None) -> PaymentResult:
+        """Run a PayPal write, retrying once on network failure or a 5xx.
 
         Retrying is safe because every write carries the same PayPal-Request-Id:
         PayPal returns the original result instead of charging twice.
@@ -187,52 +189,50 @@ class PaymentService:
                 if error.outcome_known:
                     # PayPal rejected the request: definitely nothing charged.
                     return self._finish(
-                        payment_id, decision, PaymentStatus.FAILED, error=str(error)
+                        payment_id, decision, PaymentStatus.FAILED, note, error=str(error)
                     )
                 if attempt == 2:
                     return self._finish(
-                        payment_id,
-                        decision,
-                        PaymentStatus.UNKNOWN,
+                        payment_id, decision, PaymentStatus.UNKNOWN, note,
                         error=f"PayPal server error, outcome unknown: {error}",
                     )
             except GatewayUnreachable as error:
                 if attempt == 2:
                     # We never got an answer. Money may have moved: keep it reserved.
                     return self._finish(
-                        payment_id,
-                        decision,
-                        PaymentStatus.UNKNOWN,
+                        payment_id, decision, PaymentStatus.UNKNOWN, note,
                         error=f"no answer from PayPal, outcome unknown: {error}",
                     )
+        return self._settle(payment_id, decision, order, note)
 
+    def _settle(self, payment_id, decision, order: OrderResult, note=None) -> PaymentResult:
+        """Record what a PayPal order says happened. The one place that reads orders."""
         if order.is_paid:
             return self._finish(
-                payment_id,
-                decision,
-                PaymentStatus.PAID,
-                paypal_order_id=order.id,
-                capture_id=order.capture_id,
+                payment_id, decision, PaymentStatus.PAID, note,
+                paypal_order_id=order.id, capture_id=order.capture_id, error=None,
             )
-        if order.approve_url:
+        if order.is_declined:
             return self._finish(
-                payment_id,
-                decision,
-                PaymentStatus.PENDING_OWNER,
+                payment_id, decision, PaymentStatus.FAILED, note,
                 paypal_order_id=order.id,
-                approve_url=order.approve_url,
+                error=f"PayPal declined it (order {order.status}, capture {order.capture_status})",
             )
+        if order.approve_url and order.status in ("CREATED", "PAYER_ACTION_REQUIRED"):
+            return self._finish(
+                payment_id, decision, PaymentStatus.PENDING_OWNER, note,
+                paypal_order_id=order.id, approve_url=order.approve_url, error=None,
+            )
+        # e.g. a capture still PENDING at PayPal: money may yet move, keep it reserved.
         return self._finish(
-            payment_id,
-            decision,
-            PaymentStatus.UNKNOWN,
+            payment_id, decision, PaymentStatus.UNKNOWN, note,
             paypal_order_id=order.id,
-            error=f"unexpected PayPal order status {order.status}",
+            error=f"PayPal reports order {order.status}, capture {order.capture_status}",
         )
 
-    def _finish(self, payment_id: str, decision: Decision, status: PaymentStatus, **fields):
+    def _finish(self, payment_id, decision, status: PaymentStatus, note=None, **fields):
         self._store.update_payment(payment_id, status=status, **fields)
-        self._store.append_audit(f"payment.{status.value}", fields, payment_id)
+        self._store.append_audit(f"payment.{status.value}", {**(note or {}), **fields}, payment_id)
         return PaymentResult(
             payment_id,
             status,
@@ -251,41 +251,73 @@ class PaymentService:
             if order_token != record.paypal_order_id:
                 raise InvalidState("PayPal token does not match this payment's order")
 
-            allowance = self._store.get_allowance(record.allowance_id)
-            if allowance is None or allowance.frozen or self._clock() >= allowance.expires_at:
-                self._store.update_payment(payment_id, status=PaymentStatus.REJECTED)
-                self._store.append_audit(
-                    "payment.rejected", {"why": "allowance frozen or expired before capture"},
-                    payment_id,
-                )
-                return self._get(payment_id)
-
-            try:
-                order = await self._gateway.capture_order(
-                    record.paypal_order_id, f"{payment_id}-capture"
-                )
-            except GatewayError as error:
-                self._store.update_payment(
-                    payment_id, status=PaymentStatus.FAILED, error=str(error)
-                )
-                self._store.append_audit("payment.failed", {"error": str(error)}, payment_id)
-                return self._get(payment_id)
-
-            status = PaymentStatus.PAID if order.is_paid else PaymentStatus.UNKNOWN
-            self._store.update_payment(payment_id, status=status, capture_id=order.capture_id)
-            self._store.append_audit(
-                f"payment.{status.value}",
-                {"by": "owner", "capture_id": order.capture_id},
-                payment_id,
-            )
+            if not self._active(record.allowance_id):
+                return self._reject(payment_id, "allowance frozen or expired before capture")
+            await self._capture(payment_id, record.paypal_order_id, {"by": "owner"})
             return self._get(payment_id)
 
     async def owner_rejected(self, payment_id: str) -> PaymentRecord:
+        """The owner said no: on PayPal's cancel page or with the dashboard's Reject.
+
+        Nothing was captured, so the reserved amount goes back to the budget. An
+        order the owner approved on PayPal but never came back from stays uncaptured.
+        """
         async with self._lock:
             self._pending(payment_id)
-            self._store.update_payment(payment_id, status=PaymentStatus.REJECTED)
-            self._store.append_audit("payment.rejected", {"by": "owner"}, payment_id)
+            return self._reject(payment_id, "owner rejected it")
+
+    async def check_with_paypal(self, payment_id: str) -> PaymentRecord:
+        """Settle an UNKNOWN payment by asking PayPal what actually happened."""
+        async with self._lock:
+            record = self._get(payment_id)
+            if record.status is not PaymentStatus.UNKNOWN:
+                raise InvalidState(f"payment is {record.status}, only unknown ones need checking")
+            note = {"by": "check"}
+
+            if record.paypal_order_id:
+                # A read. If it fails the payment stays unknown and the owner can retry.
+                order = await self._gateway.get_order(record.paypal_order_id)
+                if order.status != "APPROVED":
+                    self._settle(payment_id, None, order, note)
+                elif not self._active(record.allowance_id):
+                    # Approved but never captured, so nothing moved: safe to drop.
+                    self._reject(payment_id, "allowance frozen or expired before capture")
+                else:
+                    # The capture's answer was lost. Same request id: PayPal returns
+                    # that capture if it happened, and only captures now if it didn't.
+                    await self._capture(payment_id, order.id, note)
+                return self._get(payment_id)
+
+            # PayPal never answered create_order. Replaying it with the same
+            # PayPal-Request-Id returns the original order if PayPal made one.
+            if not self._active(record.allowance_id):
+                raise InvalidState(
+                    "The allowance is frozen or expired, so SpendGuard won't replay this "
+                    "payment. Unfreeze it to check, or look it up in your PayPal account."
+                )
+            if record.outcome == Outcome.APPROVE.value:
+                wallet = self._store.get_wallet()
+                if wallet is None:
+                    raise InvalidState("Link the PayPal wallet again to check this auto-payment.")
+                await self._auto_pay(payment_id, record.request, None, wallet.vault_id, note)
+            else:
+                await self._escalate(payment_id, record.request, None, note)
             return self._get(payment_id)
+
+    async def _capture(self, payment_id: str, order_id: str, note: dict) -> None:
+        async def capture() -> OrderResult:
+            return await self._gateway.capture_order(order_id, f"{payment_id}-capture")
+
+        await self._call_paypal(payment_id, None, capture, note)
+
+    def _active(self, allowance_id: str) -> bool:
+        allowance = self._store.get_allowance(allowance_id)
+        return allowance is not None and not allowance.frozen and self._clock() < allowance.expires_at
+
+    def _reject(self, payment_id: str, why: str) -> PaymentRecord:
+        self._store.update_payment(payment_id, status=PaymentStatus.REJECTED)
+        self._store.append_audit("payment.rejected", {"why": why}, payment_id)
+        return self._get(payment_id)
 
     async def refund(self, payment_id: str) -> PaymentRecord:
         async with self._lock:

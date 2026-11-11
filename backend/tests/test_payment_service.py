@@ -168,3 +168,93 @@ async def test_refund_releases_budget(linked, store, paypal):
     assert remaining(store) == USD("120.00")
     with pytest.raises(InvalidState):
         await linked.refund(paid.payment_id)  # can't refund twice
+
+
+# ---- failures after the owner approves, and settling unknown payments ----------
+
+
+async def test_capture_5xx_during_approval_keeps_budget_until_checked(linked, store, paypal):
+    result = await linked.request_payment("alw", req("95"))
+    paypal.fail_next = [GatewayError(500, "INTERNAL", "x", "d")] * 2  # captured, answer lost
+    record = await linked.owner_approved(result.payment_id, order_token="O-pay_0")
+    assert record.status is PaymentStatus.UNKNOWN  # was wrongly FAILED (budget released)
+    assert remaining(store) == USD("25.00")
+
+    record = await linked.check_with_paypal(result.payment_id)
+    assert record.status is PaymentStatus.PAID and record.error is None
+    assert paypal.captured == ["O-pay_0"]  # asked, didn't capture twice
+    assert remaining(store) == USD("25.00")
+
+
+async def test_capture_network_drop_during_approval_is_retried(linked, store, paypal):
+    result = await linked.request_payment("alw", req("95"))
+    paypal.fail_next = [GatewayUnreachable("timeout")]
+    record = await linked.owner_approved(result.payment_id, order_token="O-pay_0")
+    assert record.status is PaymentStatus.PAID
+    assert paypal.captured == ["O-pay_0"]
+
+
+async def test_declined_capture_fails_and_releases_budget(linked, store, paypal):
+    result = await linked.request_payment("alw", req("95"))
+    paypal.capture_status = "DECLINED"  # order COMPLETED, capture DECLINED
+    record = await linked.owner_approved(result.payment_id, order_token="O-pay_0")
+    assert record.status is PaymentStatus.FAILED
+    assert remaining(store) == USD("120.00")
+
+
+async def test_check_replays_unanswered_auto_pay_without_charging_twice(linked, store, paypal):
+    paypal.fail_next = [GatewayUnreachable("timeout")] * 2  # charged, never heard back
+    result = await linked.request_payment("alw", req("40"))
+    assert result.status is PaymentStatus.UNKNOWN
+
+    record = await linked.check_with_paypal(result.payment_id)
+    assert record.status is PaymentStatus.PAID
+    assert paypal.charges == ["pay_0"]  # same PayPal-Request-Id: the original order
+    assert remaining(store) == USD("80.00")
+
+
+async def test_check_captures_an_approved_order_whose_capture_was_lost(linked, store, paypal):
+    result = await linked.request_payment("alw", req("95"))
+    paypal.owner_approves_on_paypal("O-pay_0")
+    store.update_payment(result.payment_id, status=PaymentStatus.UNKNOWN)  # capture never ran
+
+    record = await linked.check_with_paypal(result.payment_id)
+    assert record.status is PaymentStatus.PAID
+    assert paypal.captured == ["O-pay_0"]
+
+
+async def test_check_drops_approved_uncaptured_order_once_frozen(linked, store, paypal):
+    result = await linked.request_payment("alw", req("95"))
+    paypal.owner_approves_on_paypal("O-pay_0")
+    store.update_payment(result.payment_id, status=PaymentStatus.UNKNOWN)
+    store.set_frozen("alw", True)
+
+    record = await linked.check_with_paypal(result.payment_id)
+    assert record.status is PaymentStatus.REJECTED
+    assert paypal.captured == []
+    assert remaining(store) == USD("120.00")
+
+
+async def test_check_wont_replay_into_a_frozen_allowance(linked, store, paypal):
+    paypal.fail_next = [GatewayUnreachable("timeout")] * 2
+    result = await linked.request_payment("alw", req("40"))
+    store.set_frozen("alw", True)
+    with pytest.raises(InvalidState):
+        await linked.check_with_paypal(result.payment_id)
+    assert store.get_payment(result.payment_id).status is PaymentStatus.UNKNOWN
+
+
+async def test_failed_lookup_leaves_payment_unknown(linked, store, paypal):
+    result = await linked.request_payment("alw", req("95"))
+    paypal.fail_next = [GatewayError(500, "INTERNAL", "x", "d")] * 2
+    await linked.owner_approved(result.payment_id, order_token="O-pay_0")
+    paypal.fail_next = [GatewayUnreachable("timeout")]
+    with pytest.raises(GatewayUnreachable):
+        await linked.check_with_paypal(result.payment_id)
+    assert store.get_payment(result.payment_id).status is PaymentStatus.UNKNOWN
+
+
+async def test_only_unknown_payments_can_be_checked(linked):
+    paid = await linked.request_payment("alw", req("10"))
+    with pytest.raises(InvalidState):
+        await linked.check_with_paypal(paid.payment_id)

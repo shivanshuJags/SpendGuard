@@ -45,7 +45,7 @@ async def test_vault_order_is_paid_immediately(client, paypal):
         json={
             "id": "O1",
             "status": "COMPLETED",
-            "purchase_units": [{"payments": {"captures": [{"id": "CAP1"}]}}],
+            "purchase_units": [{"payments": {"captures": [{"id": "CAP1", "status": "COMPLETED"}]}}],
         }
     )
     result = await client.create_order(
@@ -103,3 +103,14 @@ async def test_order_needs_vault_or_return_urls(client, paypal):
             description="x",
             request_id="r",
         )
+
+
+async def test_declined_capture_inside_completed_order_is_not_paid():
+    # PayPal can mark the order COMPLETED while the capture itself is DECLINED.
+    from app.adapters.paypal.client import _order
+
+    order = _order({
+        "id": "O2", "status": "COMPLETED",
+        "purchase_units": [{"payments": {"captures": [{"id": "CAP2", "status": "DECLINED"}]}}],
+    })
+    assert not order.is_paid and order.is_declined

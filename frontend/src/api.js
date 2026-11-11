@@ -25,6 +25,8 @@ export const api = {
   freeze: (id, frozen) => request('POST', `/allowances/${id}/freeze`, { frozen }),
   payments: (id) => request('GET', `/allowances/${id}/payments`),
   refund: (paymentId) => request('POST', `/payments/${paymentId}/refund`),
+  reject: (paymentId) => request('POST', `/payments/${paymentId}/reject`),
+  check: (paymentId) => request('POST', `/payments/${paymentId}/check`),
 
   audit: () => request('GET', '/audit?limit=500'),
 

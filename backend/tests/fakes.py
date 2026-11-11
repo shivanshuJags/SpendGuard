@@ -16,6 +16,8 @@ class FakePayPal:
     calls: list[tuple[str, str]] = field(default_factory=list)
     captured: list[str] = field(default_factory=list)
     refunds: list[str] = field(default_factory=list)
+    capture_status: str = "COMPLETED"  # set "DECLINED" to script a declined capture
+    by_order_id: dict[str, OrderResult] = field(default_factory=dict)
 
     def _maybe_fail(self):
         if self.fail_next:
@@ -37,20 +39,36 @@ class FakePayPal:
         if request_id not in self.orders:  # idempotency: replay returns the original
             if vault_id:
                 self.charges.append(request_id)
-                order = OrderResult(f"O-{request_id}", "COMPLETED", None, f"CAP-{request_id}")
+                order = OrderResult(f"O-{request_id}", "COMPLETED", None, f"CAP-{request_id}", "COMPLETED")
             else:
                 order = OrderResult(
                     f"O-{request_id}", "PAYER_ACTION_REQUIRED",
                     f"https://paypal.test/approve/{request_id}", None,
                 )
             self.orders[request_id] = order
+            self.by_order_id[order.id] = order
         self._maybe_fail()  # fail *after* the charge: the nasty case
         return self.orders[request_id]
 
     async def capture_order(self, order_id, request_id):
-        self.captured.append(order_id)
+        self.calls.append(("capture_order", request_id))
+        if request_id not in self.orders:  # idempotency, like create_order
+            self.captured.append(order_id)
+            order = OrderResult(order_id, "COMPLETED", None, f"CAP-{order_id}", self.capture_status)
+            self.orders[request_id] = order
+            self.by_order_id[order_id] = order
+        self._maybe_fail()  # fail *after* capturing: the nasty case
+        return self.orders[request_id]
+
+    async def get_order(self, order_id):
+        self.calls.append(("get_order", order_id))
         self._maybe_fail()
-        return OrderResult(order_id, "COMPLETED", None, f"CAP-{order_id}")
+        return self.by_order_id[order_id]
+
+    def owner_approves_on_paypal(self, order_id):
+        """What the owner's click on PayPal does: the order becomes APPROVED."""
+        order = self.by_order_id[order_id]
+        self.by_order_id[order_id] = OrderResult(order_id, "APPROVED", None, None)
 
     async def refund_capture(self, capture_id, request_id, amount=None):
         self.refunds.append(capture_id)

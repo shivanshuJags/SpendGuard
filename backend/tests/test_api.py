@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.adapters.store import Store
 from app.config import Settings
 from app.main import create_app
+from app.services.ports import GatewayUnreachable
 from tests.fakes import FakePayPal
 
 MERCHANT = "merchant@business.example.com"
@@ -164,3 +165,16 @@ def test_audit_is_paged(client, linked, allowance):
     assert "wallet.linked" in kinds and "payment.paid" in kinds
     later = client.get("/api/audit", params={"after": events[-2]["seq"]}).json()
     assert [e["seq"] for e in later] == [events[-1]["seq"]]
+
+
+def test_owner_rejects_from_dashboard_and_checks_unknown(client, linked, allowance, paypal):
+    hub = buy(client, allowance, "usbc-hub-pro").json()
+    assert client.post(f"/api/payments/{hub['id']}/reject").json()["status"] == "rejected"
+    assert client.get(f"/api/allowances/{allowance}").json()["remaining"] == "120.00"
+    assert client.post(f"/api/payments/{hub['id']}/reject").status_code == 409
+
+    paypal.fail_next = [GatewayUnreachable("timeout")] * 2
+    coffee = buy(client, allowance, "coffee-house-1kg").json()
+    assert coffee["status"] == "unknown"
+    checked = client.post(f"/api/payments/{coffee['id']}/check").json()
+    assert checked["status"] == "paid" and paypal.charges.count(coffee["id"]) == 1

@@ -229,4 +229,5 @@ def _order(body: dict[str, Any]) -> OrderResult:
         status=body["status"],
         approve_url=approve_url,
         capture_id=captures[0]["id"] if captures else None,
+        capture_status=captures[0].get("status") if captures else None,
     )

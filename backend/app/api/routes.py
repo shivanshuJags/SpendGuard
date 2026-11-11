@@ -202,6 +202,18 @@ async def payment_cancel(c: C, payment_id: str) -> RedirectResponse:
     return _to_dashboard(c, payment=payment_id, status=record.status.value)
 
 
+@router.post("/payments/{payment_id}/reject")
+async def reject_payment(c: C, payment_id: str) -> PaymentOut:
+    """Owner declines a payment waiting for approval; its amount returns to the budget."""
+    return PaymentOut.of(await c.payments.owner_rejected(payment_id))
+
+
+@router.post("/payments/{payment_id}/check")
+async def check_payment(c: C, payment_id: str) -> PaymentOut:
+    """Ask PayPal what happened to a payment whose outcome is unknown."""
+    return PaymentOut.of(await c.payments.check_with_paypal(payment_id))
+
+
 @router.post("/payments/{payment_id}/refund")
 async def refund(c: C, payment_id: str) -> PaymentOut:
     return PaymentOut.of(await c.payments.refund(payment_id))

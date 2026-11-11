@@ -50,11 +50,18 @@ class OrderResult:
     id: str
     status: str  # CREATED, PAYER_ACTION_REQUIRED, APPROVED, COMPLETED, ...
     approve_url: str | None  # set when the owner must approve on PayPal
-    capture_id: str | None  # set once money has moved
+    capture_id: str | None  # set once a capture was attempted
+    # The capture's own status. PayPal can report the *order* COMPLETED while the
+    # capture inside it is DECLINED, so money moved only if this is COMPLETED.
+    capture_status: str | None = None
 
     @property
     def is_paid(self) -> bool:
-        return self.status == "COMPLETED" and self.capture_id is not None
+        return self.status == "COMPLETED" and self.capture_status == "COMPLETED"
+
+    @property
+    def is_declined(self) -> bool:
+        return self.capture_status in ("DECLINED", "FAILED") or self.status == "VOIDED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +90,8 @@ class PaymentGateway(Protocol):
     ) -> OrderResult: ...
 
     async def capture_order(self, order_id: str, request_id: str) -> OrderResult: ...
+
+    async def get_order(self, order_id: str) -> OrderResult: ...
 
     async def refund_capture(
         self, capture_id: str, request_id: str, amount: Money | None = None
